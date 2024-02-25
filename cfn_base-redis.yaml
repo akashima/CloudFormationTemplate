@@ -1,0 +1,86 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Create elasticache for memcached with single-node.
+Parameters:
+  VpcId:
+    Description: Specify from parent stack.
+    Type: String
+  SecurityGroup:
+    Description: Specify from parent stack.
+    Type: String
+  CACHESubnetId1:
+    Description: Specify from parent stack.
+    Type: String
+  CACHESubnetId2:
+    Description: Specify from parent stack.
+    Type: String
+  AppEnv:
+    Description: Specify from parent stack.
+    Type: String
+  AppProjectName:
+    Description: Specify from parent stack.
+    Type: String
+  AppType:
+    Description: Specify from parent stack.
+    Type: String
+  CacheNodeType:
+    Description: Specify Cache node type.
+    Type: String
+    Default: cache.t3.micro
+Resources:
+  CacheSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub '${AppEnv}-${AppProjectName}-${AppType}'
+      GroupDescription: Elasticache Security Group
+      VpcId: !Ref 'VpcId'
+      Tags:
+        - Key: Name
+          Value: !Sub '${AppEnv}-${AppProjectName}-${AppType}'
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '6379'
+          ToPort: '6379'
+          SourceSecurityGroupId: !Ref 'SecurityGroup'
+          Description: 'ECS SecurityGroup'
+  ParameterGroup:
+    Type: AWS::ElastiCache::ParameterGroup
+    Properties:
+      CacheParameterGroupFamily: redis7
+      Description: Default parameter group for redis7.x
+      Properties:
+        tcp-keepalive: '300'
+  CacheSubnetGroup:
+    Type: AWS::ElastiCache::SubnetGroup
+    Properties:
+      CacheSubnetGroupName: !Sub '${AppEnv}-${AppProjectName}-${AppType}'
+      Description: For production use
+      SubnetIds:
+        - !Ref 'CACHESubnetId1'
+        - !Ref 'CACHESubnetId2'
+  ClusterGroup:
+    Type: 'AWS::ElastiCache::ReplicationGroup'
+    Properties:
+      ReplicationGroupDescription: For production use
+      NumCacheClusters: '2'
+      CacheParameterGroupName: !Ref 'ParameterGroup'
+      PreferredCacheClusterAZs:
+        - ap-northeast-1b
+        - ap-northeast-1c
+      Engine: redis
+      CacheNodeType: !Ref 'CacheNodeType'
+      AutomaticFailoverEnabled: 'true'
+      AutoMinorVersionUpgrade: 'true'
+      AutomaticFailoverEnabled: 'true'
+      CacheSubnetGroupName: !Ref CacheSubnetGroup
+      EngineVersion: 7.1
+      PreferredMaintenanceWindow: 'wed:18:00-wed:20:30'
+      SnapshotRetentionLimit: '30'
+      SnapshotWindow: '16:00-18:00'
+      SecurityGroupIds:
+        - !Ref CacheSecurityGroup
+Outputs:
+  Endpoint:
+    Description: ElastiCache endpoint
+    Value: !GetAtt 'ClusterGroup.PrimaryEndPoint.Address'
+    Export:
+      Name: !Sub '${AWS::StackName}-Endpoint'

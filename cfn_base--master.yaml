@@ -1,0 +1,161 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Create base development environment.
+Parameters:
+  AppEnv:
+    Description: Specify application evn prefix.
+    Type: String
+    Default: mng
+  AppProjectName:
+    Description: Specify vpc evn prefix.
+    Type: String
+    Default: example
+  VPC:
+    Description: Specify VPC Id
+    Type: String
+    Default: 'vpc-xxxxxxx'
+  PublicSubnetId1:
+    Description: Specify Public Subnet
+    Type: String 
+    Default: 'subnet-xxxxxxxx'
+  PublicSubnetId2:
+    Description: Specify Public Subnet
+    Type: String
+    Default: 'subnet-xxxxxxxx'
+  ProtectedSubnetId1:
+    Description: Specify Protected Subnet
+    Type: String
+    Default: 'subnet-xxxxxxxx'
+  ProtectedSubnetId2:
+    Description: Specify Protected Subnet
+    Type: String
+    Default: 'subnet-xxxxxxxx'
+  PrivateSubnetId1:
+    Description: Specify Private Subnet
+    Type: String
+    Default: 'subnet-xxxxxxxx'
+  PrivateSubnetId2:
+    Description: Specify Private Subnet
+    Type: String
+    Default: 'subnet-xxxxxxxx'
+  HostedZoneName: 
+    Description: Specify hosted zone name
+    Type: String
+    Default: 'xxxxxx.xxx'
+  PrivateHostedZoneName: 
+    Description: Specify private hosted zone name
+    Type: String
+    Default: 'xxxxxxx.local'
+  RDSInstanceUsername:
+    Description: Specify master username.
+    Type: String
+    AllowedPattern: '[a-zA-Z0-9]*'
+    ConstraintDescription: must contain only alphanumeric characters.
+  RDSInstancePassword:
+    Description: Specify master password.
+    Type: String
+    NoEcho: true
+    MinLength: '8'
+    MaxLength: '41'
+    AllowedPattern: '[a-zA-Z0-9]*'
+    ConstraintDescription: must contain only alphanumeric characters.
+  KeyName:
+    Description: EC2 Key Name
+    Type: String
+    Default: 'xxxxxxxxxxx'
+  AutoRecovery:
+    Description: EC2 AutoRecovery
+    Type: String
+    Default: 'enable'
+  ALBLogBucket:
+    Description: ALBLogBucketName
+    Type: String
+    Default: 'arn:aws:s3:::xxx-xxx-logs-xxxxxxxxxxxx'
+  CertificateArn:
+    Description: ELB(CLB, ALB) certificate Arn
+    Type: String
+    Default: 'arn:aws:acm:ap-northeast-1:xxxxxxxxxxxx:certificate/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'
+  TemplateBaseURL:
+    Description: Enter the S3 template URL eg https://s3.amazonaws.com/bucketname/path/filename
+    Type: String
+    Default: https://s3.amazonaws.com/cf-templates-xxxxxxxxxxxx-ap-northeast-1/folder
+Resources:
+  LogGroups:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub '${TemplateBaseURL}/cfn_base-loggroup.yaml'
+      TimeoutInMinutes: '5'
+      Parameters:
+        AppEnv: !Ref 'AppEnv'
+  # Create ec2 instance (ubuntu).
+  EC2Instance:
+    DependsOn: LogGroups
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub '${TemplateBaseURL}/cfn_base-ec2-ubuntu.yaml'
+      TimeoutInMinutes: '20'
+      Parameters:
+        VpcId: !Ref 'VPC'
+        PublicSubnetId1: !Ref 'PublicSubnetId1'
+        PublicSubnetId2: !Ref 'PublicSubnetId2'
+        ProtectedSubnetId: !Ref 'ProtectedSubnetId1'
+        AppEnv: !Sub '${AppEnv}'
+        AppProjectName: !Sub '${AppProjectName}'
+        AppType: ubuntu
+        Certificate: !Ref 'CertificateArn'
+        HostedZoneName: !Ref 'HostedZoneName'
+        PrivateHostedZoneName: !Ref 'PrivateHostedZoneName'
+        InstanceType: t3.micro
+        KeyName: !Ref 'KeyName'
+        AutoRecovery: !Ref AutoRecovery
+        ALBLogBucket: !Ref 'ALBLogBucket'
+#  EC2Instance:
+#    DependsOn: LogGroups
+#    Type: AWS::CloudFormation::Stack
+#    Properties:
+#      TemplateURL: !Sub '${TemplateBaseURL}/cfn_base-ec2-amazonlinux2023.yaml'
+#      TimeoutInMinutes: '20'
+#      Parameters:
+#        VpcId: !Ref 'VPC'
+#        PublicSubnetId1: !Ref 'PublicSubnetId1'
+#        PublicSubnetId2: !Ref 'PublicSubnetId2'
+#        ProtectedSubnetId: !Ref 'ProtectedSubnetId1'
+#        AppEnv: !Sub '${AppEnv}'
+#        AppProjectName: !Sub '${AppProjectName}'
+#        AppType: ubuntu
+#        Certificate: !Ref 'CertificateArn'
+#        HostedZoneName: !Ref 'HostedZoneName'
+#        PrivateHostedZoneName: !Ref 'PrivateHostedZoneName'
+#        InstanceType: t3.micro
+#        KeyName: !Ref 'KeyName'
+#        AutoRecovery: !Ref AutoRecovery
+#        ALBLogBucket: !Ref 'ALBLogBucket'
+  # Database
+  RDS:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub '${TemplateBaseURL}/cfn_base-mariadb.yaml'
+      TimeoutInMinutes: '30'
+      Parameters:
+        AppEnv: !Ref 'AppEnv'
+        AppProjectName: !Ref 'AppProjectName'
+        AppType: mariadb
+        VpcId: !Ref 'VPC'
+        RDSSubnetId1: !Ref 'PrivateSubnetId1'
+        RDSSubnetId2: !Ref 'PrivateSubnetId2'
+        SecurityGroup: !GetAtt 'EC2Instance.Outputs.SecurityGroup'
+        RDSInstanceUsername: !Ref 'RDSInstanceUsername'
+        RDSInstancePassword: !Ref 'RDSInstancePassword'
+  # cache service
+  REDIS:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub '${TemplateBaseURL}/cfn_base-redis.yaml'
+      TimeoutInMinutes: '30'
+      Parameters:
+        AppEnv: !Ref 'AppEnv'
+        AppProjectName: !Ref 'AppProjectName'
+        AppType: redis
+        VpcId: !Ref 'VPC'
+        CACHESubnetId1: !Ref 'PrivateSubnetId1'
+        CACHESubnetId2: !Ref 'PrivateSubnetId2'
+        SecurityGroup: !GetAtt 'EC2Instance.Outputs.SecurityGroup'

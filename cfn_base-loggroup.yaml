@@ -1,0 +1,76 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Create ec2 instance for bastion.
+Parameters:
+  AppEnv:
+    Description: Specify from parent stack.
+    Type: String
+  LogsRetentionInDays:
+    Description: Specify from parent stack.
+    Type: Number
+    Default: 545
+Resources:
+  MessagesLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      RetentionInDays: !Ref 'LogsRetentionInDays'
+      LogGroupName: !Sub '/${AppEnv}/var/log/messages'
+  SecureLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      RetentionInDays: !Ref 'LogsRetentionInDays'
+      LogGroupName: !Sub '/${AppEnv}/var/log/Secure'
+  CronLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      RetentionInDays: !Ref 'LogsRetentionInDays'
+      LogGroupName: !Sub '/${AppEnv}/var/log/cron'
+  CloudInitLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      RetentionInDays: !Ref 'LogsRetentionInDays'
+      LogGroupName: !Sub '/${AppEnv}/var/log/cloud-init.log'
+  CfnWireLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      RetentionInDays: !Ref 'LogsRetentionInDays'
+      LogGroupName: !Sub '/${AppEnv}/var/log/cfn-wire.log'
+  CfnInitLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      RetentionInDays: !Ref 'LogsRetentionInDays'
+      LogGroupName: !Sub '/${AppEnv}/var/log/cfn-init.log'
+  CfnHupLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      RetentionInDays: !Ref 'LogsRetentionInDays'
+      LogGroupName: !Sub '/${AppEnv}/var/log/cfn-hup.log'
+  CfnInitCmdLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      RetentionInDays: !Ref 'LogsRetentionInDays'
+      LogGroupName: !Sub '/${AppEnv}/var/log/cfn-init-cmd.log'
+  CloudInitOutputLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      RetentionInDays: !Ref 'LogsRetentionInDays'
+      LogGroupName: !Sub '/${AppEnv}/var/log/cloud-init-output.log'
+  DmesgOutputLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      RetentionInDays: !Ref 'LogsRetentionInDays'
+      LogGroupName: !Sub '/${AppEnv}/var/log/dmesg'
+  AmazonSsmAgentOutputLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      RetentionInDays: !Ref 'LogsRetentionInDays'
+      LogGroupName: !Sub '/${AppEnv}/var/log/amazon/ssm/amazon-ssm-agent.log'
+  AmazonSsmAgentErrorOutputLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      RetentionInDays: !Ref 'LogsRetentionInDays'
+      LogGroupName: !Sub '/${AppEnv}/var/log/amazon/ssm/errors.log'
+  AuditOutputLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      RetentionInDays: !Ref 'LogsRetentionInDays'
+      LogGroupName: !Sub '/${AppEnv}/var/log/audit.log'

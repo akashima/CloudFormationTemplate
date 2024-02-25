@@ -1,0 +1,147 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Create RDS Aurora with Multi-AZ
+Parameters:
+  VpcId:
+    Description: Spacify VPC ID
+    Type: String
+  SecurityGroup:
+    Description: Specify CMS SecurityGroup
+    Type: String
+  AppEnv:
+    Description: Spacify App Env
+    Type: String
+  AppProjectName:
+    Description: Spacify App Project Name
+    Type: String
+  AppType:
+    Description: application type.
+    Type: String
+    Default: rds
+  RDSSubnetId1:
+    Description: Specify private subnet
+    Type: String
+  RDSSubnetId2:
+    Description: Specify private subnet
+    Type: String
+  RDSInstanceClass:
+    Description: Chose RDS-MySQL instance
+    Type: String
+    Default: db.t3.micro
+    AllowedValues:
+      - db.t3.micro
+      - db.t3.medium
+      - db.t3.small
+      - db.r3.large
+      - db.r3.xlarge
+      - db.r3.2xlarge
+      - db.r3.4xlarge
+      - db.r3.8xlarge
+      - db.r6g.large
+  RDSInstanceUsername:
+    Description: RDS master user
+    Default: ''
+    Type: String
+    MinLength: '1'
+    MaxLength: '16'
+    AllowedPattern: '[a-zA-Z][a-zA-Z0-9]*'
+    ConstraintDescription: must begin with a letter and contain only alphanumeric
+      characters.
+  RDSInstancePassword:
+    Description: RDS master password
+    Type: String
+    NoEcho: true
+    MinLength: '8'
+    MaxLength: '41'
+    AllowedPattern: '[a-zA-Z0-9]*'
+    ConstraintDescription: must contain only alphanumeric characters.
+  PerformanceInsights:
+    Description: performance insights enable option
+    Type: String
+    Default: true
+    AllowedValues:
+    - true
+    - false
+Resources:
+  RDSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub '${AppEnv}-${AppProjectName}-${AppType}-db'
+      GroupDescription: Enable RDS access.
+      VpcId: !Ref 'VpcId'
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '3306'
+          ToPort: '3306'
+          SourceSecurityGroupId: !Ref 'SecurityGroup'
+          Description: 'Passbolt SecurityGroup'
+      Tags:
+        - Key: Name
+          Value: !Sub '${AppEnv}-${AppProjectName}-${AppType}-db'
+  RDSMultiAZSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Enable RDS Multi-AZ access.
+      SubnetIds:
+        - !Ref 'RDSSubnetId1'
+        - !Ref 'RDSSubnetId2'
+  RDSDBParameterGroup:
+    Type: AWS::RDS::DBParameterGroup
+    Properties:
+      Parameters:
+        character_set_client: utf8mb4
+        character_set_connection: utf8mb4
+        character_set_database: utf8mb4
+        character_set_filesystem: utf8mb4
+        character_set_results: utf8mb4
+        character_set_server: utf8mb4
+        time_zone: Asia/Tokyo
+        innodb_ft_enable_stopword: '0'
+#        ngram_token_size: '1'
+        general_log: '1'
+        log_slow_query: 1
+        log_slow_query_time: 1
+        log_output: FILE
+      Family: mariadb10.11
+      Description: Default parameter group for mariadb10.11
+  RDSDBInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      MultiAZ: false
+      AvailabilityZone: !Select ['1', !GetAZs '']
+      AllowMajorVersionUpgrade: false
+      AutoMinorVersionUpgrade: true
+      BackupRetentionPeriod: 30
+      DeleteAutomatedBackups: false
+      DBSubnetGroupName: !Ref 'RDSMultiAZSubnetGroup'
+      Engine: mariadb
+      EngineVersion: 10.11
+      AllocatedStorage: '30'
+      MaxAllocatedStorage: '60'
+      StorageType: gp3
+      MasterUsername: !Ref 'RDSInstanceUsername'
+      MasterUserPassword: !Ref 'RDSInstancePassword'
+      VPCSecurityGroups:
+        - !Ref 'RDSSecurityGroup'
+      DBParameterGroupName: !Ref 'RDSDBParameterGroup'
+      DBInstanceIdentifier: !Sub '${AppEnv}-${AppProjectName}-${AppType}'
+      DBInstanceClass: !Ref 'RDSInstanceClass'
+#      EnablePerformanceInsights: !Ref PerformanceInsights
+      PreferredBackupWindow: 17:00-18:00
+      PreferredMaintenanceWindow: Mon:19:00-Mon:20:00
+      EnableCloudwatchLogsExports:
+        - error
+        - general
+        - slowquery
+        - audit
+    DeletionPolicy: Snapshot
+Outputs:
+  EndpointAddress:
+    Description: RDS Endpoint Address
+    Value: !GetAtt 'RDSDBInstance.Endpoint.Address'
+    Export:
+      Name: !Sub '${AWS::StackName}-RDSEndpointAddress'
+  EndpointPort:
+    Description: RDS Endpoint Port
+    Value: !GetAtt 'RDSDBInstance.Endpoint.Port'
+    Export:
+      Name: !Sub '${AWS::StackName}-RDSEndpointPort'

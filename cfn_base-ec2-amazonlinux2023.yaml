@@ -1,0 +1,533 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Create ec2 instance for bastion.
+Parameters:
+  VpcId:
+    Description: >-
+      The id of VPC. You can easily identify the id if you add Name tag to vpc
+      in advance.
+    Type: 'AWS::EC2::VPC::Id'
+  PublicSubnetId1:
+    Description: >-
+      The subnet id of VPC. You can easily identify the id if you add Name tag
+      to subnets in advance.
+    Type: 'AWS::EC2::Subnet::Id'
+  PublicSubnetId2:
+    Description: >-
+      The subnet id of VPC. You can easily identify the id if you add Name tag
+      to subnets in advance.
+    Type: 'AWS::EC2::Subnet::Id'
+  ProtectedSubnetId:
+    Description: >-
+      The subnet id of VPC. You can easily identify the id if you add Name tag
+      to subnets in advance.
+    Type: 'AWS::EC2::Subnet::Id'
+  AppEnv:
+    Description: Specify Application Environment
+    Type: String
+  AppProjectName:
+    Description: Specify from parent stack.
+    Type: String
+  AppType:
+    Description: Specify Application Environment
+    Type: String
+  Certificate:
+    Description: Specify ACM or Server certificates. (e.g. aws acm list-certificates --region ap-northeast-1)
+    Type: String
+    Default: ''
+  HostedZoneName:
+    Description: Specify from parent stack
+    Type: String
+  PrivateHostedZoneName:
+    Description: Private HostedZone Name
+    Type: String
+  InstanceType:
+    Description: The instance type for the EC2 instance.
+    Type: String
+  LogsRetentionInDays:
+    Description: >-
+      Specifies the number of days you want to retain log events. (Default: 731
+      days = 2 years)
+    Type: Number
+    Default: 365
+    AllowedValues:
+      - 365
+  KeyName:
+    Description: >-
+      The key pair for ec2-user to establish a SSH connection. Please make the
+      key in advance using [EC2 > Key Pairs] menu on AWS consle.
+    Type: 'AWS::EC2::KeyPair::KeyName'
+    Default: ''
+  TimeZone:
+    Description: 'The name of time zone. (e.g. UTC, Asia/Tokyo)'
+    Type: String
+    Default: Asia/Tokyo
+  LogsRetentionInDays:
+    Description: Specifies the number of days you want to retain log events.
+    Type: Number
+    Default: '365'
+    AllowedValues: [1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1827, 3653]
+  AutoRecovery:
+    #Description: Auto recovery instance when underlying hardware fails.
+    Description: Specify from parent stack.
+    Type: String
+    AllowedValues: ['enable', 'disable']
+  ALBLogBucket:
+    Description: S3Bucket
+    Type: String
+    Default: ''
+Mappings:
+  RegionMap:
+    # Amazon Linux 2023
+    'ap-northeast-1':
+      AMI: 'ami-020283e959651b381'
+Conditions:
+  IsAutoRecovery: !Equals [!Ref AutoRecovery, 'enable']
+Resources:
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: 'ALB security group'
+      SecurityGroupIngress:
+        # Your own IP
+        - IpProtocol: tcp
+          FromPort: '443'
+          ToPort: '443'
+          CidrIp: !Sub 'xxx.xxx.xxx.xxx/32'
+          Description: 'Your own IP'
+      Tags:
+        - Key: Name
+          Value: !Sub '${AppEnv}-${AppProjectName}-${AppType}-ALB'
+      VpcId: !Ref 'VpcId'
+  EC2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Your Own SSH IP
+      SecurityGroupIngress:
+        # Allow from your IP
+        - IpProtocol: tcp
+          FromPort: '22'
+          ToPort: '22'
+          CidrIp: xxx.xxx.xxx.xxx/32
+          Description: 'Your own IP'
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          SourceSecurityGroupId: !Ref 'ALBSecurityGroup'
+          Description: 'ALB Security Group'
+      Tags:
+        - Key: Name
+          Value: !Sub '${AppEnv}-${AppProjectName}-${AppType}-EC2'
+      VpcId: !Ref 'VpcId'
+  ALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub '${AppEnv}-${AppType}-ALB'
+      Scheme: internet-facing
+      LoadBalancerAttributes:
+        - Key: deletion_protection.enabled
+          Value: 'false'
+        - Key: access_logs.s3.enabled
+          Value: 'true'
+        - Key: routing.http2.enabled
+          Value: 'true'
+        - Key: routing.http.drop_invalid_header_fields.enabled
+          Value: 'false'
+        - Key: idle_timeout.timeout_seconds
+          Value: '60'
+        - Key: access_logs.s3.bucket
+          Value: !Ref 'ALBLogBucket'
+        - Key: access_logs.s3.prefix
+          Value: !Sub '${AppEnv}-${AppType}'
+      Subnets:
+        - !Ref 'PublicSubnetId1'
+        - !Ref 'PublicSubnetId2'
+      SecurityGroups:
+        - !Ref 'ALBSecurityGroup'
+      Tags:
+        - Key: Name
+          Value: !Sub '${AppEnv}-${AppType}-ALB'
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref 'ALBTarget'
+      LoadBalancerArn: !Ref 'ALB'
+      Port: '443'
+      Protocol: HTTPS
+      Certificates:
+        - CertificateArn: !Ref 'Certificate'
+      SslPolicy: ELBSecurityPolicy-TLS-1-2-2017-01
+  ALBTarget:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    DependsOn: ALB
+    Properties:
+      HealthCheckIntervalSeconds: 30
+      #HealthCheckPath: /
+      HealthCheckPort: traffic-port
+      HealthCheckProtocol: HTTP
+      #HealthCheckTimeoutSeconds: 3
+      HealthyThresholdCount: 2
+      TargetGroupAttributes:
+        - Key: load_balancing.algorithm.type
+          Value: least_outstanding_requests
+      Matcher:
+        HttpCode: '200'
+      Targets:
+        - Id: !Ref 'EC2Instance'
+          Port: '80'
+      Port: 80
+      Protocol: HTTP
+      UnhealthyThresholdCount: 2
+      Name: !Sub '${AppEnv}-${AppType}-ALBTarget'
+      VpcId: !Ref 'VpcId'
+  EC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !FindInMap [RegionMap, !Ref 'AWS::Region', AMI]
+      InstanceType: !Ref 'InstanceType'
+      IamInstanceProfile: !Ref 'IamInstanceProfile'
+      KeyName: !Ref 'KeyName'
+      SecurityGroupIds:
+        - !Ref 'EC2SecurityGroup'
+      SubnetId: !Ref 'ProtectedSubnetId'
+      Tags:
+        - Key: Name
+          Value: !Sub '${AppEnv}-${AppProjectName}-${AppType}'
+      Tenancy: default
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: '30'
+            VolumeType: gp3
+            DeleteOnTermination: true
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -xe
+          yum update -y aws-cfn-bootstrap
+          /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource EC2Instance --region ${AWS::Region}
+          /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource EC2Instance --region ${AWS::Region}
+          reboot
+    CreationPolicy:
+      ResourceSignal:
+        Timeout: PT5M
+    Metadata:
+      AWS::CloudFormation::Init:
+        configSets:
+          default:
+            - cloudwatch_agent
+#            - awsmon
+            - cfn-hup
+            - install_basic_init
+            - install_basic_packages
+            - install_optional_packages
+            - install_app_packages
+            - configure_basic_setting
+        cloudwatch_agent: # CloudWatch agent
+          packages:
+            yum:
+              amazon-cloudwatch-agent: []
+              collectd: []
+          files:
+            /etc/awslogs/awscli.conf:
+              content: !Sub |
+                [plugins]
+                cwlogs = cwlogs
+                [default]
+                region = ${AWS::Region}
+              mode: '000644'
+              owner: root
+              group: root
+            /etc/awslogs/awslogs.conf:
+              content: !Sub |
+                [general]
+                state_file = /var/lib/awslogs/agent-state
+                [/var/log/messages]
+                datetime_format = %b %d %H:%M:%S
+                file = /var/log/messages
+                log_stream_name = {instance_id}-${AppType}/var/log/messages
+                log_group_name = /${AppEnv}/var/log/messages
+                time_zone = LOCAL
+                [/var/log/secure]
+                datetime_format = %b %d %H:%M:%S
+                file = /var/log/secure
+                log_stream_name = {instance_id}-${AppType}/var/log/secure
+                log_group_name = /${AppEnv}/var/log/secure
+                time_zone = LOCAL
+                [/var/log/cron]
+                datetime_format = %b %d %H:%M:%S
+                file = /var/log/cron
+                log_stream_name = {instance_id}-${AppType}/var/log/cron
+                log_group_name = /${AppEnv}/var/log/cron
+                time_zone = LOCAL
+                [/var/log/cloud-init.log]
+                datetime_format = %b %d %H:%M:%S
+                file = /var/log/cloud-init.log
+                log_stream_name = {instance_id}-${AppType}/var/log/cloud-init.log
+                log_group_name = /${AppEnv}/var/log/cloud-init.log
+                time_zone = LOCAL
+                [/var/log/cfn-wire.log]
+                datetime_format = %Y-%m-%d %H:%M:%S
+                file = /var/log/cfn-wire.log
+                log_stream_name = {instance_id}-${AppType}/var/log/cfn-wire.log
+                log_group_name = /${AppEnv}/var/log/cfn-wire.log
+                time_zone = LOCAL
+                [/var/log/cfn-init.log]
+                datetime_format = %Y-%m-%d %H:%M:%S
+                file = /var/log/cfn-init.log
+                log_stream_name = {instance_id}-${AppType}/var/log/cfn-init.log
+                log_group_name = /${AppEnv}/var/log/cfn-init.log
+                time_zone = LOCAL
+                [/var/log/cfn-hup.log]
+                datetime_format = %Y-%m-%d %H:%M:%S
+                file = /var/log/cfn-hup.log
+                log_stream_name = {instance_id}-${AppType}/var/log/cfn-hup.log
+                log_group_name = /${AppEnv}/var/log/cfn-hup.log
+                time_zone = LOCAL
+                [/var/log/cfn-init-cmd.log]
+                datetime_format = %Y-%m-%d %H:%M:%S
+                file = /var/log/cfn-init-cmd.log
+                log_stream_name = {instance_id}-${AppType}/var/log/cfn-init-cmd.log
+                log_group_name = /${AppEnv}/var/log/cfn-init-cmd.log
+                time_zone = LOCAL
+                [/var/log/cloud-init-output.log]
+                file = /var/log/cloud-init-output.log
+                log_stream_name = {instance_id}-${AppType}/var/log/cloud-init-output.log
+                log_group_name = /${AppEnv}/var/log/cloud-init-output.log
+                time_zone = LOCAL
+                [/var/log/dmesg]
+                file = /var/log/dmesg
+                log_stream_name = {instance_id}-${AppType}/var/log/dmesg
+                log_group_name = /${AppEnv}/var/log/dmesg
+                time_zone = LOCAL
+                [/var/log/amazon/ssm/amazon-ssm-agent.log]
+                file = /var/log/amazon/ssm/amazon-ssm-agent.log
+                log_stream_name = {instance_id}-${AppType}/var/log/amazon/ssm/amazon-ssm-agent.log
+                log_group_name = /${AppEnv}/var/log/amazon/ssm/amazon-ssm-agent.log
+                time_zone = LOCAL
+                [/var/log/amazon/ssm/errors.log]
+                file = /var/log/amazon/ssm/errors.log
+                log_stream_name = {instance_id}-${AppType}/var/log/amazon/ssm/errors.log
+                log_group_name = /${AppEnv}/var/log/amazon/ssm/errors.log
+                time_zone = LOCAL
+                [/var/log/audit.log]
+                file = /var/log/audit.log
+                log_stream_name = {instance_id}-${AppType}/var/log/audit.log
+                log_group_name = /${AppEnv}/var/log/audit.log
+                time_zone = LOCAL
+              mode: '000644'
+              owner: root
+              group: root
+#          services:
+#            systemd:
+#              cloudwatch_agent:
+#                enabled: "true"
+#                ensureRunning: "true"
+#        awsmon: # Monitoring EC2 with custom metrics (OS-level metric: memory, disk space, etc)
+#          packages:
+#            yum:
+#              perl-Switch: []
+#              perl-DateTime: []
+#              perl-Sys-Syslog: []
+#              perl-LWP-Protocol-https: []
+#              perl-Digest-SHA: []
+#              amazon-cloudwatch-agent: []
+        cfn-hup:
+          files:
+            /etc/cfn/cfn-hup.conf:
+              content: !Sub |
+                [main]
+                stack=${AWS::StackId}
+                region=${AWS::Region}
+                interval=1
+              mode: '000400'
+              owner: root
+              group: root
+            /etc/cfn/hooks.d/cfn-auto-reloader.conf:
+              content: !Sub |
+                [cfn-auto-reloader-hook]
+                triggers=post.update
+                path=Resources.EC2Instance.Metadata.AWS::CloudFormation::Init
+                action=/opt/aws/bin/cfn-init -v --stack=${AWS::StackName} --resource=EC2Instance --region=${AWS::Region}
+                runas=root
+              mode: '000400'
+              owner: root
+              group: root
+            /usr/lib/systemd/system/cfn-hup.service:
+              content: !Sub |
+                [Unit]
+                Description=cfn-hup daemon
+                [Service]
+                Type=simple
+                ExecStart=/opt/aws/bin/cfn-hup
+                Restart=always
+                [Install]
+                WantedBy=multi-user.target
+          services:
+            systemd:
+              cfn-hup:
+                enabled: "true"
+                ensureRunning: "true"
+        install_basic_init:
+          packages:
+            yum:
+              python3.11-pip: []
+          commands:
+            01_init:
+              command: |
+                cd /var/tmp/
+                curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+                unzip awscliv2.zip
+                ./aws/install
+                rm -r /var/tmp/awscliv2.zip /var/tmp/aws
+            02_init:
+              command: |
+                pip3.11 install -U ansible
+        install_basic_packages:
+          packages:
+            yum:
+              git: []
+              jq: []
+              zsh: []
+              #figlet: []
+              mailx: []
+              ruby3.2: []
+        install_optional_packages:
+          commands:
+            01_codedeploy_agent:
+              command: |
+                cd /tmp
+                wget https://aws-codedeploy-ap-northeast-1.s3.amazonaws.com/latest/install
+                chmod +x ./install
+                ./install auto
+                rm ./install
+        install_app_packages:
+          packages:
+            yum:
+              mariadb105: []
+        configure_basic_setting:
+          files:
+            /etc/dhcp/dhclient.conf:
+              content: !Sub |
+                timeout 300;
+                supersede domain-search "ap-northeast-1.compute.internal.", "${PrivateHostedZoneName}.";
+              mode: '000644'
+              owner: root
+              group: root
+          commands:
+            01_change_timezone:
+              command: !Sub
+                timedatectl set-timezone ${TimeZone}
+            02_change_hostname:
+              command: !Sub
+                hostnamectl set-hostname ${AppEnv}-${AppProjectName}-${AppType}
+            03_change_audit:
+              command: !Sub |
+                cp /usr/share/audit/sample-rules/30-stig.rules /etc/audit/audit.rules
+                systemctl enable auditd.service
+          services:
+            systemd:
+              auditd:
+                enabled: "true"
+                ensureRunning: "true"
+  IamRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+                - ssm.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonEC2RoleforSSM
+      Policies:
+        - PolicyName: !Sub 'policygen-${AppEnv}-${AppProjectName}-${AppType}-clw'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Action:
+                  - logs:CreateLogGroup
+                  - logs:DeleteLogGroup
+                  - logs:CreateLogStream
+                  - logs:DeleteLogStream
+                  - logs:PutLogEvents
+                  - logs:PutRetentionPolicy
+                  - logs:DescribeLogStreams
+                  - cloudwatch:PutMetricData
+                  - ec2:Describe*
+                Effect: Allow
+                Resource: '*'
+        - PolicyName: !Sub 'policygen-${AppEnv}-${AppProjectName}-${AppType}-ssm'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Action:
+                - ssm:Put*
+                - ssm:Update*
+                - ssm:Describe*
+                - ssm:Get*
+                - ssm:List*
+                - ssmmessages:CreateControlChannel
+                - ssmmessages:CreateDataChannel
+                - ssmmessages:OpenControlChannel
+                - ssmmessages:OpenDataChannel
+                - ec2messages:AcknowledgeMessage
+                - ec2messages:DeleteMessage
+                - ec2messages:FailMessage
+                - ec2messages:GetEndpoint
+                - ec2messages:GetMessages
+                - ec2messages:SendReply
+                - ec2:DescribeInstanceStatus
+                - ds:CreateComputer
+                - ds:DescribeDirectories
+                Effect: Allow
+                Resource: '*'
+        - PolicyName: !Sub 'policygen-${AppEnv}-${AppProjectName}-${AppType}-codecommit'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Action:
+                  - sts:AssumeRole
+                Effect: Allow
+                Resource: 'arn:aws:iam::507316023645:role/codecommit-cross-account-role'
+  IamInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /
+      Roles:
+        - !Ref 'IamRole'
+      InstanceProfileName: !Sub '${AppEnv}-${AppProjectName}-${AppType}'
+  RecoveryAlarm:
+    Condition: IsAutoRecovery
+    Type: 'AWS::CloudWatch::Alarm'
+    Properties:
+      AlarmDescription: 'Recovering instance when underlying hardware fails.'
+      Namespace: 'AWS/EC2'
+      MetricName: StatusCheckFailed_System
+      Statistic: Minimum
+      Period: 60
+      EvaluationPeriods: 5
+      ComparisonOperator: GreaterThanThreshold
+      Threshold: 0
+      AlarmActions:
+      - !Sub 'arn:aws:automate:${AWS::Region}:ec2:recover'
+      Dimensions:
+      - Name: InstanceId
+        Value: !Ref EC2Instance
+Outputs:
+  PrivateIp:
+    Description: EC2 private ip address
+    Value: !GetAtt 'EC2Instance.PrivateIp'
+    Export:
+      Name: !Sub '${AWS::StackName}-PrivateIp'
+  SecurityGroup:
+    Description: EC2 Security Group
+    Value: !Ref 'EC2SecurityGroup'
+    Export:
+      Name: !Sub '${AWS::StackName}-SecurityGroup'
